@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>OpenElectricity Ember Bridge</title>
+        <script
+            src="https://kit.fontawesome.com/5eeeb07dac.js"
+            crossorigin="anonymous"
+        ></script>
+        <style>
+            select {
+                font-family: Arial, Helvetica, sans-serif; 
+                font-size: 20px;
+                margin-right: 20px;
+
+            }
+
+            label {
+                font-family: Arial, Helvetica, sans-serif; 
+                font-size: 18px; 
+            }
+
+            input[type="radio"] {
+                transform: scale(1.2); 
+            }
+            
+            pre {
+                background: #f4f4f4;
+                padding: 15px;
+                border-radius: 5px;
+                overflow: auto;
+                margin-top: 15px;
+                display: none;
+                position: relative;
+                font-size: 10px;
+            }
+            .json-key {
+                color: brown;
+            }
+            .json-value.string {
+                color: green;
+            }
+            .json-value.number {
+                color: blue;
+            }
+            .json-value.boolean {
+                color: purple;
+            }
+            .copy-button {
+                border: 0;
+                background: none;
+                cursor: pointer;
+                position: absolute;
+                top: 8px;
+                right: 8px;
+                z-index: 1;
+            }
+            .copy-button i {
+                color: black;
+                font-size: 20px;
+                display: block;
+            }
+            .copy-button:disabled i {
+                color: lightgray;
+            }
+            .copy-button:enabled i {
+                color: black;
+            }
+            .copy-button:hover:enabled i {
+                color: darkgray;
+            }
+        </style>
+    </head>
+    <body>
+        <div>
+            <select id="country-dropdown">
+                <!-- options will be populated here -->
+            </select>
+            <label for="period-monthly">
+                <input
+                    type="radio"
+                    id="period-monthly"
+                    name="period"
+                    value="monthly"
+                    checked
+                />
+                monthly
+            </label>
+
+            <label for="period-yearly">
+                <input
+                    type="radio"
+                    id="period-yearly"
+                    name="period"
+                    value="yearly"
+                />
+                yearly
+            </label>
+        </div>
+
+        <div>
+            <pre id="data-output">
+            <!-- data will be displayed here -->
+            </pre>
+            <button class="copy-button" id="copy-btn" disabled>
+                <i class="fa-regular fa-copy"></i>
+            </button>
+        </div>
+
+        <script>
+            function fetchCountries() {
+                fetch("/api/countries")
+                    .then((response) => response.json())
+                    .then((data) => {
+                        const dropdown =
+                            document.getElementById("country-dropdown");
+
+                        const regions = data
+                            .filter((item) => item.iso.startsWith("x-"))
+                            .sort((a, b) => a.name.localeCompare(b.name));
+                        const countries = data
+                            .filter((item) => !item.iso.startsWith("x-"))
+                            .sort((a, b) => a.name.localeCompare(b.name));
+
+                        regions.forEach((region) => {
+                            const option = document.createElement("option");
+                            option.value = region.iso;
+                            option.textContent = region.name;
+                            dropdown.appendChild(option);
+                        });
+
+                        const divider = document.createElement("hr");
+                        dropdown.appendChild(divider);
+
+                        countries.forEach((country) => {
+                            const option = document.createElement("option");
+                            option.value = country.iso;
+                            option.textContent = country.name;
+                            dropdown.appendChild(option);
+                        });
+
+                        dropdown.addEventListener("change", fetchEnergyData);
+
+                        // select australia and fire an update
+                        dropdown.value = 'AUS';
+                        const event = new Event('change');
+                        dropdown.dispatchEvent(event);
+                    })
+                    .catch((error) =>
+                        console.error("Error fetching countries:", error),
+                    );
+            }
+
+            function fetchEnergyData() {
+                const dropdown = document.getElementById("country-dropdown");
+                const code = dropdown.value;
+                const outputElem = document.getElementById("data-output");
+                const copyBtn = document.getElementById("copy-btn");
+
+                // determine the selected period
+                const period = document.querySelector('input[name="period"]:checked').value;
+
+                // hide JSON output and disable copy button before fetching
+                outputElem.style.display = "none";
+                copyBtn.disabled = true;
+
+                console.time(`fetch ${code}/${period}`);
+
+                fetch(`/v4/ember/${code}/${period}.json`)
+                    .then((response) => response.text())
+                    .then((data) => {
+                        console.timeEnd(`fetch ${code}/${period}`);
+                        outputElem.innerHTML = syntaxHighlight(data);
+
+                        // show JSON output and enable copy button when data is ready
+                        outputElem.style.display = "block";
+                        copyBtn.disabled = false;
+
+                        copyBtn.onclick = function () {
+                            navigator.clipboard
+                                .writeText(data)
+                                .catch((err) =>
+                                    console.error("error copying text: ", err),
+                                );
+                        };
+                    })
+                    .catch((error) =>
+                        console.error("error fetching energy data:", error),
+                    );
+            }
+
+            // pretty print JSON with syntax highlighting
+            function syntaxHighlight(json) {
+                if (typeof json !== "string") {
+                    json = JSON.stringify(json, undefined, 2);
+                }
+
+                json = json
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;");
+
+                // regular expressions for formatting JSON
+                return json.replace(
+                    /("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(?:\s*:)?|\b(true|false|null)\b|\b\d+\.?\d*\b)/g,
+                    function (match) {
+                        let cls = "json-value";
+                        if (/^"/.test(match)) {
+                            if (/:$/.test(match)) {
+                                // key, highlighted using CSS class
+                                return `<span class="json-key">${match}</span>`;
+                            } else {
+                                // string value, highlighted using CSS class
+                                return `<span class="json-value string">${match}</span>`;
+                            }
+                        } else if (/true|false|null/.test(match)) {
+                            // boolean or null, highlighted using CSS class
+                            return `<span class="json-value boolean">${match}</span>`;
+                        } else {
+                            // number value, highlighted using CSS class
+                            return `<span class="json-value number">${match}</span>`;
+                        }
+                    }
+                );
+            }
+
+            document.addEventListener("DOMContentLoaded", fetchCountries);
+
+            // wire up all 'period' radio buttons to fetchEnergyData
+            const radioButtons = document.querySelectorAll('input[name="period"]');
+            radioButtons.forEach(function(radio) {
+              radio.addEventListener('change', fetchEnergyData);
+            });
+        </script>
+    </body>
+</html>
